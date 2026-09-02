@@ -35,13 +35,13 @@ class ValidationErrorCodes {
         /** A condition method takes more than one parameter. */
         const val INVALID_CONDITION_SIGNATURE = "INVALID_CONDITION_SIGNATURE"
 
-        /** Agent has goals but no actions, so no plan can ever reach them. */
+        /** Agent has goals but no actions at all, so no plan can ever reach them. */
         const val NO_ACTIONS_TO_GOALS = "NO_ACTIONS_TO_GOALS"
 
-        /** Goal has no matching action, so it cannot be planned. */
+        /** An assembled agent scope has a goal with no corresponding action. */
         const val GOAL_ACTION_NOT_FOUND = "GOAL_ACTION_NOT_FOUND"
 
-        /** Action annotation is missing on the method. */
+        /** A method annotated with @AchievesGoal is missing its required @Action annotation. */
         const val MISSING_ACTION_ANNOTATION = "MISSING_ACTION_ANNOTATION"
     }
 }

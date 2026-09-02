@@ -315,7 +315,7 @@ class AgentMetadataReader(
             val validationResult = agentValidationManager.validate(agent)
             if (!validationResult.isValid) {
                 if (skipAgentDeploymentOnError) {
-                    logSkipAgentDeploymentOnError( "Agent ${targetType.name} is rejected as it has validation errors as reported above.")
+                    logSkipAgentDeploymentOnError( "Agent ${targetType.name} is rejected due to validation errors as reported above.")
                     return null
                 }
             }

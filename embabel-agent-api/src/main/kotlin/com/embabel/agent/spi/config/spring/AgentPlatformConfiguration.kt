@@ -189,6 +189,14 @@ class AgentPlatformConfiguration(
     }
 
     @Bean
+    fun agentProcessCheckpointListener(
+        agentProcessRepository: ObjectProvider<AgentProcessRepository>,
+    ): AgenticEventListener {
+        return (agentProcessRepository.getIfAvailable() as? AgenticEventListener)
+            ?: AgenticEventListener.DevNull
+    }
+
+    @Bean
     fun contextRepository(
         contextRepositoryProperties: ContextRepositoryProperties,
     ): ContextRepository = InMemoryContextRepository(contextRepositoryProperties)

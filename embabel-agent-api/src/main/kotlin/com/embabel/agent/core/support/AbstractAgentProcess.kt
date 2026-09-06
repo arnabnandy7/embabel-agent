@@ -123,6 +123,7 @@ abstract class AbstractAgentProcess(
                 // No guaranteed next tick - set status immediately
                 logger.info("Terminating process {} (was {}): {}", id, status, reason)
                 setStatus(AgentProcessStatusCode.TERMINATED)
+                platformServices.eventListener.onProcessEvent(AgentProcessTerminatedEvent(this))
             }
         }
     }
@@ -381,8 +382,12 @@ abstract class AbstractAgentProcess(
                 platformServices.eventListener.onProcessEvent(AgentProcessFailedEvent(this))
             }
 
-            AgentProcessStatusCode.TERMINATED, AgentProcessStatusCode.KILLED -> {
-                // Event will have been raised at the point of termination
+            AgentProcessStatusCode.TERMINATED -> {
+                platformServices.eventListener.onProcessEvent(AgentProcessTerminatedEvent(this))
+            }
+
+            AgentProcessStatusCode.KILLED -> {
+                // Event will have been raised at the point of termination (kill() returns ProcessKilledEvent)
             }
 
             AgentProcessStatusCode.WAITING -> {
@@ -420,6 +425,7 @@ abstract class AbstractAgentProcess(
             _failureInfo = signalTermination
             setStatus(AgentProcessStatusCode.TERMINATED)
             platformServices.eventListener.onProcessEvent(signalTermination)
+            platformServices.eventListener.onProcessEvent(AgentProcessTerminatedEvent(this))
             return signalTermination
         }
 
@@ -444,6 +450,7 @@ abstract class AbstractAgentProcess(
             _failureInfo = earlyTermination
             setStatus(AgentProcessStatusCode.TERMINATED)
             platformServices.eventListener.onProcessEvent(earlyTermination)
+            platformServices.eventListener.onProcessEvent(AgentProcessTerminatedEvent(this))
             return earlyTermination
         }
         return null
@@ -572,6 +579,7 @@ abstract class AbstractAgentProcess(
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     _status.set(AgentProcessStatusCode.TERMINATED)
+                    platformServices.eventListener.onProcessEvent(AgentProcessTerminatedEvent(this))
                     return ActionStatus(
                         runningTime = Duration.between(actionExecutionStartEvent.timestamp, Instant.now()),
                         status = ActionStatusCode.FAILED,

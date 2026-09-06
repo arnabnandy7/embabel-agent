@@ -10,14 +10,20 @@ The framework keeps storage backend-neutral. Applications provide an
 them, restores process instances, and decorates an
 `InMemoryAgentProcessRepository` or another runtime `AgentProcessRepository`.
 
-==== Lifecycle Boundaries
+==== Lifecycle Boundaries and Event-Driven Checkpointing
 
-The initial persistence model supports two checkpoint boundaries:
+The persistence model supports event-driven snapshot checkpointing as the primary mechanism, backed by a policy-based safety net on repository operations:
 
-* `WAITING`: a process has called `waitFor` and can be restored by another
-  runtime after local process state is lost.
-* Finished states: a process has completed, failed, been killed, or been
-  terminated, and durable state should reflect that final lifecycle state.
+* *Event-Driven Checkpointing (Primary)*: `PersistentAgentProcessRepository` implements `AgenticEventListener` and listens for lifecycle events to trigger immediate, reactive snapshot saves. The subscribed events are:
+** `AgentProcessWaitingEvent`: a process has called `waitFor` and can be restored by another runtime after local process state is lost.
+** `AgentProcessCompletedEvent`: work completed successfully.
+** `AgentProcessFailedEvent`: execution failed.
+** `ProcessKilledEvent`: process was killed externally.
+** `AgentProcessTerminatedEvent`: process reached a termination condition (signal or policy termination).
+* *Policy-Based Safety Net*: `checkpointIfNeeded()` is retained during `save()` and `update()` repository operations to ensure processes are checkpointed even if lifecycle events are not published.
+* *CAS Deduplication*: Optimistic versioning (compare-and-set) naturally deduplicates writes when both layers attempt to write snapshots for the same version, treating redundant writes idempotently.
+
+Additionally, `AgentProcessRestoredEvent` is published whenever a process is restored from a durable snapshot in `PersistentAgentProcessRepository.restore()`.
 
 `WaitForCheckpointPolicy` checkpoints only `WAITING` processes. Use it when the
 snapshot store is only a recovery cache.
@@ -114,8 +120,8 @@ On lookup, `PersistentAgentProcessRepository` first checks the runtime
 repository. In the current tests this is an `InMemoryAgentProcessRepository`.
 If the in-memory process is missing, it loads the serialized snapshot, rebuilds
 the blackboard, reconstructs the process implementation, restores internal
-status and action history, then saves the restored process back into the
-in-memory repository.
+status and action history, saves the restored process back into the
+in-memory repository, and emits an `AgentProcessRestoredEvent`.
 
 This allows a HITL flow to resume after pod-local memory has been lost:
 

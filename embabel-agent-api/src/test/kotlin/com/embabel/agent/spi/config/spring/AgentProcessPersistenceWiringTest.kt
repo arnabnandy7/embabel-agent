@@ -15,7 +15,10 @@
  */
 package com.embabel.agent.spi.config.spring
 
+import com.embabel.agent.api.event.AgentProcessWaitingEvent
+import com.embabel.agent.api.event.AgenticEventListener
 import com.embabel.agent.core.AgentPlatform
+import com.embabel.agent.core.AgentProcessRepository
 import com.embabel.agent.core.AgentProcessStatusCode
 import com.embabel.agent.core.ProcessOptions
 import com.embabel.agent.core.persistence.BlackboardEntryDeserializationContext
@@ -143,6 +146,27 @@ class AgentProcessPersistenceWiringTest {
         repository.save(waitingProcess("p1"))
 
         assertNotNull(store.findLatestByProcessId("p1"))
+    }
+
+    @Test
+    fun `registers checkpoint listener when repository implements AgenticEventListener`() {
+        val store = InMemoryAgentProcessSnapshotStore()
+        val repository = repository(store)
+        val listener = configuration.agentProcessCheckpointListener(
+            agentProcessRepository = providerOf(AgentProcessRepository::class.java, repository),
+        )
+        assertNotNull(listener)
+        val process = waitingProcess("p1")
+        listener.onProcessEvent(AgentProcessWaitingEvent(process))
+        assertNotNull(store.findLatestByProcessId("p1"))
+    }
+
+    @Test
+    fun `checkpoint listener returns DevNull when repository is missing or not an event listener`() {
+        val listener = configuration.agentProcessCheckpointListener(
+            agentProcessRepository = emptyProvider(),
+        )
+        assertEquals(AgenticEventListener.DevNull, listener)
     }
 
     private fun repository(

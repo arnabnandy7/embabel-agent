@@ -15,6 +15,13 @@
  */
 package com.embabel.agent.spi.support.persistence
 
+import com.embabel.agent.api.common.PlatformServices
+import com.embabel.agent.api.event.AgentProcessCompletedEvent
+import com.embabel.agent.api.event.AgentProcessFailedEvent
+import com.embabel.agent.api.event.AgentProcessRestoredEvent
+import com.embabel.agent.api.event.AgentProcessTerminatedEvent
+import com.embabel.agent.api.event.AgentProcessWaitingEvent
+import com.embabel.agent.api.event.ProcessKilledEvent
 import com.embabel.agent.core.AgentProcessStatusCode
 import com.embabel.agent.core.AgentProcess
 import com.embabel.agent.core.AgentProcessRepository
@@ -25,6 +32,7 @@ import com.embabel.agent.core.support.InMemoryBlackboard
 import com.embabel.agent.core.support.InternalAgentStateApi
 import com.embabel.agent.core.support.SimpleAgentProcess
 import com.embabel.agent.domain.io.UserInput
+import com.embabel.agent.test.common.EventSavingAgenticEventListener
 import com.embabel.agent.spi.persistence.AgentProcessCheckpointPolicy
 import com.embabel.agent.spi.persistence.SerializedAgentProcessSnapshot
 import com.embabel.agent.spi.persistence.StoredSnapshotMetadata
@@ -190,10 +198,99 @@ class PersistentAgentProcessRepositoryTest {
         )
     }
 
+    @Test
+    fun `emits AgentProcessRestoredEvent when restoring process from snapshot`() {
+        val snapshotStore = InMemoryAgentProcessSnapshotStore()
+        val originalRepository = repository(
+            runtimeRepository = InMemoryAgentProcessRepository(),
+            snapshotStore = snapshotStore,
+        )
+        val process = waitingProcess("p1")
+        originalRepository.save(process)
+
+        val eventListener = EventSavingAgenticEventListener()
+        val platformServices = dummyPlatformServices(eventListener = eventListener)
+        val restoringRepository = repository(
+            runtimeRepository = InMemoryAgentProcessRepository(),
+            snapshotStore = snapshotStore,
+            platformServices = { platformServices },
+        )
+
+        val restored = restoringRepository.findById("p1")
+        assertNotNull(restored)
+
+        val restoredEvents = eventListener.processEvents.filterIsInstance<AgentProcessRestoredEvent>()
+        assertEquals(1, restoredEvents.size)
+        assertEquals("p1", restoredEvents.first().agentProcess.id)
+    }
+
+    @Test
+    fun `checkpoints on lifecycle events via onProcessEvent`() {
+        val snapshotStore = InMemoryAgentProcessSnapshotStore()
+        val repository = repository(snapshotStore = snapshotStore)
+        val process = waitingProcess("p1")
+
+        repository.onProcessEvent(AgentProcessWaitingEvent(process))
+        assertEquals(1, snapshotStore.findLatestByProcessId("p1")?.version)
+
+        process.replaceRuntimeState(
+            status = AgentProcessStatusCode.COMPLETED,
+            history = emptyList(),
+        )
+        repository.onProcessEvent(AgentProcessCompletedEvent(process))
+        assertEquals(2, snapshotStore.findLatestByProcessId("p1")?.version)
+
+        process.replaceRuntimeState(
+            status = AgentProcessStatusCode.FAILED,
+            history = emptyList(),
+        )
+        repository.onProcessEvent(AgentProcessFailedEvent(process))
+        assertEquals(3, snapshotStore.findLatestByProcessId("p1")?.version)
+
+        process.replaceRuntimeState(
+            status = AgentProcessStatusCode.KILLED,
+            history = emptyList(),
+        )
+        repository.onProcessEvent(ProcessKilledEvent(process))
+        assertEquals(4, snapshotStore.findLatestByProcessId("p1")?.version)
+
+        process.replaceRuntimeState(
+            status = AgentProcessStatusCode.TERMINATED,
+            history = emptyList(),
+        )
+        repository.onProcessEvent(AgentProcessTerminatedEvent(process))
+        assertEquals(5, snapshotStore.findLatestByProcessId("p1")?.version)
+    }
+
+    @Test
+    fun `checkpoint deduplicates idempotently when snapshot store was concurrently advanced`() {
+        val underlyingStore = InMemoryAgentProcessSnapshotStore()
+        var saveCallCount = 0
+        val concurrentStore = object : AgentProcessSnapshotStore by underlyingStore {
+            override fun save(snapshot: SerializedAgentProcessSnapshot, expectedVersion: Long?): StoredSnapshotMetadata {
+                saveCallCount++
+                if (saveCallCount == 1) {
+                    // Simulate a concurrent writer successfully saving version 1
+                    underlyingStore.save(snapshot, expectedVersion)
+                    // Now attempt with the stale expectedVersion (throws AgentProcessPersistenceException)
+                    return underlyingStore.save(snapshot, expectedVersion)
+                }
+                return underlyingStore.save(snapshot, expectedVersion)
+            }
+        }
+        val repository = repository(snapshotStore = concurrentStore)
+        val process = waitingProcess("p1")
+
+        // Should not throw; CAS mismatch is caught and recognized as already at version 1
+        repository.checkpoint(process)
+        assertEquals(1, underlyingStore.findLatestByProcessId("p1")?.version)
+    }
+
     private fun repository(
         runtimeRepository: AgentProcessRepository = InMemoryAgentProcessRepository(),
-        snapshotStore: InMemoryAgentProcessSnapshotStore = InMemoryAgentProcessSnapshotStore(),
+        snapshotStore: AgentProcessSnapshotStore = InMemoryAgentProcessSnapshotStore(),
         checkpointPolicy: AgentProcessCheckpointPolicy = LifecycleCheckpointPolicy,
+        platformServices: () -> PlatformServices = { dummyPlatformServices() },
     ): PersistentAgentProcessRepository =
         PersistentAgentProcessRepository(
             runtimeRepository = runtimeRepository,
@@ -203,7 +300,7 @@ class PersistentAgentProcessRepositoryTest {
             snapshotSerializer = snapshotSerializer,
             snapshotRestorer = snapshotRestorer,
             agents = { listOf(DslWaitingAgent) },
-            platformServices = { dummyPlatformServices() },
+            platformServices = platformServices,
         )
 
     /**

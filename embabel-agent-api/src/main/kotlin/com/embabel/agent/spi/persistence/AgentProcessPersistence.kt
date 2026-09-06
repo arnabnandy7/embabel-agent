@@ -16,6 +16,7 @@
 package com.embabel.agent.spi.persistence
 
 import com.embabel.agent.api.common.PlatformServices
+import com.embabel.agent.api.event.AgenticEventListener
 import com.embabel.agent.core.Agent
 import com.embabel.agent.core.AgentProcessRepository
 import com.embabel.agent.core.persistence.BlackboardEntrySerializer
@@ -104,4 +105,12 @@ object AgentProcessPersistence {
             platformServices = platformServices,
         )
     }
+
+    /**
+     * Return the [AgenticEventListener] that checkpoints processes reactively
+     * on lifecycle events for the given persistent repository.
+     */
+    fun checkpointListener(repository: AgentProcessRepository): AgenticEventListener =
+        repository as? AgenticEventListener
+            ?: error("Repository [${repository.javaClass.name}] does not implement AgenticEventListener")
 }

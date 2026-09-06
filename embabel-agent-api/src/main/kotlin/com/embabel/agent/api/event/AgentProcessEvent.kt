@@ -443,3 +443,17 @@ class ProgressUpdateEvent(
 class ProcessKilledEvent(
     agentProcess: AgentProcess,
 ) : AbstractAgentProcessEvent(agentProcess)
+
+/**
+ * Emitted when an agent process is terminated.
+ */
+class AgentProcessTerminatedEvent(
+    agentProcess: AgentProcess,
+) : AbstractAgentProcessEvent(agentProcess)
+
+/**
+ * Emitted after an agent process has been reconstructed from a snapshot.
+ */
+class AgentProcessRestoredEvent(
+    agentProcess: AgentProcess,
+) : AbstractAgentProcessEvent(agentProcess)

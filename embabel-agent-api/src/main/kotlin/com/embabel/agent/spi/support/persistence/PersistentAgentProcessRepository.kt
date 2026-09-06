@@ -16,12 +16,22 @@
 package com.embabel.agent.spi.support.persistence
 
 import com.embabel.agent.api.common.PlatformServices
+import com.embabel.agent.api.event.AgentProcessCompletedEvent
+import com.embabel.agent.api.event.AgentProcessEvent
+import com.embabel.agent.api.event.AgentProcessFailedEvent
+import com.embabel.agent.api.event.AgentProcessRestoredEvent
+import com.embabel.agent.api.event.AgentProcessTerminatedEvent
+import com.embabel.agent.api.event.AgentProcessWaitingEvent
+import com.embabel.agent.api.event.AgenticEventListener
+import com.embabel.agent.api.event.ProcessKilledEvent
 import com.embabel.agent.core.AbstractAgentProcessRepository
 import com.embabel.agent.core.Agent
 import com.embabel.agent.core.AgentProcess
 import com.embabel.agent.core.AgentProcessRepository
 import com.embabel.agent.spi.persistence.AgentProcessCheckpointPolicy
+import com.embabel.agent.core.persistence.AgentProcessPersistenceException
 import com.embabel.agent.spi.persistence.AgentProcessSnapshotStore
+import org.slf4j.LoggerFactory
 
 /**
  * Repository decorator that keeps active processes in a runtime repository and
@@ -45,7 +55,9 @@ internal class PersistentAgentProcessRepository(
     private val snapshotRestorer: AgentProcessSnapshotRestorer,
     private val agents: () -> Collection<Agent>,
     private val platformServices: () -> PlatformServices,
-) : AbstractAgentProcessRepository() {
+) : AbstractAgentProcessRepository(), AgenticEventListener {
+
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     override fun findById(id: String): AgentProcess? =
         runtimeRepository.findById(id) ?: restore(snapshotStore.findLatestByProcessId(id))
@@ -80,7 +92,18 @@ internal class PersistentAgentProcessRepository(
         runtimeRepository.delete(agentProcess)
     }
 
-    private fun checkpointIfNeeded(agentProcess: AgentProcess) {
+    override fun onProcessEvent(event: AgentProcessEvent) {
+        when (event) {
+            is AgentProcessWaitingEvent -> checkpoint(event.agentProcess)
+            is AgentProcessCompletedEvent -> checkpoint(event.agentProcess)
+            is AgentProcessFailedEvent -> checkpoint(event.agentProcess)
+            is ProcessKilledEvent -> checkpoint(event.agentProcess)
+            is AgentProcessTerminatedEvent -> checkpoint(event.agentProcess)
+            else -> {}
+        }
+    }
+
+    fun checkpoint(agentProcess: AgentProcess) {
         if (!checkpointPolicy.shouldStoreSnapshot(agentProcess)) {
             return
         }
@@ -90,10 +113,28 @@ internal class PersistentAgentProcessRepository(
             agentProcess = agentProcess,
             version = nextVersion,
         )
-        snapshotStore.save(
-            snapshot = snapshotSerializer.serialize(snapshot),
-            expectedVersion = existing?.version,
-        )
+        try {
+            snapshotStore.save(
+                snapshot = snapshotSerializer.serialize(snapshot),
+                expectedVersion = existing?.version,
+            )
+        } catch (e: AgentProcessPersistenceException) {
+            val current = snapshotStore.findLatestByProcessId(agentProcess.id)
+            if (current != null && current.version >= nextVersion) {
+                logger.debug(
+                    "Deduplicated checkpoint for process {} at version {}: store already at version {}",
+                    agentProcess.id,
+                    nextVersion,
+                    current.version,
+                )
+                return
+            }
+            throw e
+        }
+    }
+
+    private fun checkpointIfNeeded(agentProcess: AgentProcess) {
+        checkpoint(agentProcess)
     }
 
     // After the first restore the process is cached in the runtime repository, so
@@ -108,5 +149,7 @@ internal class PersistentAgentProcessRepository(
                 platformServices = platformServices(),
             )
             runtimeRepository.save(restored)
+            platformServices().eventListener.onProcessEvent(AgentProcessRestoredEvent(restored))
+            restored
         }
 }

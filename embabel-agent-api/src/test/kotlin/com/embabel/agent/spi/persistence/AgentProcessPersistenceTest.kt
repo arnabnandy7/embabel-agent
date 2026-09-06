@@ -27,6 +27,7 @@ import com.embabel.agent.core.support.DslWaitingAgent
 import com.embabel.agent.core.support.InMemoryBlackboard
 import com.embabel.agent.core.support.SimpleAgentProcess
 import com.embabel.agent.domain.io.UserInput
+import com.embabel.agent.api.event.AgentProcessWaitingEvent
 import com.embabel.agent.spi.support.DefaultPlannerFactory
 import com.embabel.agent.spi.support.InMemoryAgentProcessRepository
 import com.embabel.agent.spi.support.persistence.InMemoryAgentProcessSnapshotStore
@@ -38,6 +39,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.springframework.http.MediaType
 
 /**
@@ -145,6 +147,28 @@ class AgentProcessPersistenceTest {
 
         assertNull(store.findLatestByProcessId("p1"))
         assertNull(runtime.findById("p1"))
+    }
+
+    @Test
+    fun `checkpointListener returns listener that checkpoints on lifecycle events`() {
+        val store = InMemoryAgentProcessSnapshotStore()
+        val repository = persistentRepository(snapshotStore = store)
+        val listener = AgentProcessPersistence.checkpointListener(repository)
+        assertNotNull(listener)
+
+        val process = waitingProcess("p1")
+        listener.onProcessEvent(AgentProcessWaitingEvent(process))
+        assertNotNull(store.findLatestByProcessId("p1"))
+        assertEquals(1L, store.findLatestByProcessId("p1")?.version)
+    }
+
+    @Test
+    fun `checkpointListener throws if repository does not implement AgenticEventListener`() {
+        val runtimeRepository = InMemoryAgentProcessRepository()
+        val exception = assertThrows<IllegalStateException> {
+            AgentProcessPersistence.checkpointListener(runtimeRepository)
+        }
+        assertTrue(exception.message!!.contains("does not implement AgenticEventListener"))
     }
 
     private fun persistentRepository(

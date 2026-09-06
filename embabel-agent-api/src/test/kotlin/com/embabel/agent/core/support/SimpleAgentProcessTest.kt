@@ -24,6 +24,7 @@ import com.embabel.agent.api.common.StuckHandlingResultCode
 import com.embabel.agent.api.dsl.Frog
 import com.embabel.agent.api.dsl.agent
 import com.embabel.agent.api.dsl.evenMoreEvilWizard
+import com.embabel.agent.api.event.AgentProcessTerminatedEvent
 import com.embabel.agent.api.event.ObjectAddedEvent
 import com.embabel.agent.api.event.ObjectBoundEvent
 import com.embabel.agent.core.Agent
@@ -518,13 +519,26 @@ class SimpleAgentProcessTest {
 
         private fun createProcess(
             status: AgentProcessStatusCode = AgentProcessStatusCode.NOT_STARTED,
+            eventListener: com.embabel.agent.api.event.AgenticEventListener? = null,
         ): TestableAgentProcess {
-            val dummyPlatformServices = dummyPlatformServices()
+            val dummyPlatformServices = dummyPlatformServices(eventListener = eventListener)
             val process = TestableAgentProcess(dummyPlatformServices)
             if (status != AgentProcessStatusCode.NOT_STARTED) {
                 process.setStatusForTest(status)
             }
             return process
+        }
+
+        @Test
+        fun `immediate termination emits AgentProcessTerminatedEvent`() {
+            val eventListener = EventSavingAgenticEventListener()
+            val process = createProcess(AgentProcessStatusCode.WAITING, eventListener = eventListener)
+            process.terminateAgent("test reason")
+
+            assertEquals(AgentProcessStatusCode.TERMINATED, process.status)
+            val terminatedEvents = eventListener.processEvents.filterIsInstance<AgentProcessTerminatedEvent>()
+            assertEquals(1, terminatedEvents.size)
+            assertEquals("test-terminate", terminatedEvents.first().agentProcess.id)
         }
 
         @Test

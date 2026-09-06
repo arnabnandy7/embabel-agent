@@ -6,11 +6,12 @@ through `AgentProcessSnapshotStore`, while this package owns snapshot creation,
 serialization, restoration, and decoration of an `InMemoryAgentProcessRepository`
 or another runtime `AgentProcessRepository`.
 
-The first supported lifecycle boundaries are:
+Checkpointing is primarily event-driven, with a policy-based safety net on repository operations:
 
-- `WAITING`: used as a recovery checkpoint for HITL flows parked by `waitFor`.
-- Finished states: used to advance durable state after resumed work completes,
-  fails, is killed, or is terminated.
+- **Event-Driven Checkpointing (Primary)**: `PersistentAgentProcessRepository` implements `AgenticEventListener` and checkpoints processes reactively on `AgentProcessWaitingEvent`, `AgentProcessCompletedEvent`, `AgentProcessFailedEvent`, `ProcessKilledEvent`, and `AgentProcessTerminatedEvent`.
+- **Policy-Based Safety Net**: `checkpointIfNeeded()` is called on repository `save()` and `update()` calls, ensuring persistence even when lifecycle events are not published.
+- **CAS Deduplication**: Redundant writes between the event layer and the safety net are deduplicated gracefully via optimistic versioning (CAS).
+- **Restore Notifications**: `AgentProcessRestoredEvent` is emitted whenever a process is reconstituted from durable snapshots.
 
 JDBC, cache, Redis, or other storage implementations are not shipped from this
 package. They should implement `AgentProcessSnapshotStore` outside the framework
@@ -19,6 +20,11 @@ or appear as test fixtures.
 ```mermaid
 classDiagram
     direction LR
+
+    class AgenticEventListener {
+        <<interface>>
+        +onProcessEvent(event)
+    }
 
     class AgentProcessRepository {
         <<interface>>
@@ -36,6 +42,8 @@ classDiagram
         -snapshotFactory
         -snapshotSerializer
         -snapshotRestorer
+        +onProcessEvent(event)
+        +checkpoint(process)
     }
 
     class AgentProcessCheckpointPolicy {
@@ -91,6 +99,7 @@ classDiagram
     }
 
     PersistentAgentProcessRepository ..|> AgentProcessRepository
+    PersistentAgentProcessRepository ..|> AgenticEventListener
     PersistentAgentProcessRepository --> AgentProcessSnapshotStore
     PersistentAgentProcessRepository --> AgentProcessCheckpointPolicy
     PersistentAgentProcessRepository --> AgentProcessSnapshotFactory

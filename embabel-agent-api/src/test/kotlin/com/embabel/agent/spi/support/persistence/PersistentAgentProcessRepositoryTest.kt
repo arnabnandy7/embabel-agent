@@ -17,6 +17,8 @@ package com.embabel.agent.spi.support.persistence
 
 import com.embabel.agent.api.common.PlatformServices
 import com.embabel.agent.api.event.AgentProcessTerminatedEvent
+import com.embabel.agent.api.dsl.Frog
+import com.embabel.agent.api.dsl.agent
 import com.embabel.agent.core.AgentProcessStatusCode
 import com.embabel.agent.core.AgentProcess
 import com.embabel.agent.core.AgentProcessRepository
@@ -61,7 +63,7 @@ class PersistentAgentProcessRepositoryTest {
 
     @ParameterizedTest
     @EnumSource(AgentProcessStatusCode::class, names = ["WAITING", "PAUSED", "STUCK", "COMPLETED"])
-    fun `immediate termination persists terminal state and restores after runtime loss`(status: AgentProcessStatusCode) {
+    fun `process A terminates process B and B restores as terminated after runtime loss`(status: AgentProcessStatusCode) {
         val snapshotStore = InMemoryAgentProcessSnapshotStore()
         val runtimeRepository = InMemoryAgentProcessRepository()
         val repository = repository(runtimeRepository = runtimeRepository, snapshotStore = snapshotStore)
@@ -77,12 +79,33 @@ class PersistentAgentProcessRepositoryTest {
         repository.update(process)
         val previousVersion = snapshotStore.findLatestByProcessId("p1")!!.version
 
-        process.terminateAgent("external shutdown")
+        val supervisorAgent = agent("supervisor", description = "Terminates another process by id") {
+            transformation<UserInput, Frog>(name = "terminate-target") {
+                val target = services.agentProcessRepository.findById(it.input.content)!!
+                target.terminateAgent("shutdown requested by supervisor")
+                Frog("supervisor completed")
+            }
+            goal(name = "done", description = "done", satisfiedBy = Frog::class)
+        }
+        val supervisor = SimpleAgentProcess(
+            id = "supervisor",
+            parentId = null,
+            agent = supervisorAgent,
+            processOptions = ProcessOptions(),
+            blackboard = InMemoryBlackboard().also { it += UserInput(process.id) },
+            platformServices = services,
+            plannerFactory = DefaultPlannerFactory,
+        )
+        repository.save(supervisor)
+
+        assertEquals(AgentProcessStatusCode.COMPLETED, supervisor.run().status)
 
         val snapshot = snapshotStore.findLatestByProcessId("p1")!!
         assertEquals(AgentProcessStatusCode.TERMINATED, snapshot.status)
         assertEquals(previousVersion + 1, snapshot.version)
         assertEquals(1, listener.processEvents.filterIsInstance<AgentProcessTerminatedEvent>().size)
+        assertEquals(process.id, listener.processEvents.filterIsInstance<AgentProcessTerminatedEvent>().single().processId)
+        assertEquals(AgentProcessStatusCode.COMPLETED, snapshotStore.findLatestByProcessId(supervisor.id)!!.status)
         process.terminateAgent("repeat shutdown")
         assertEquals(snapshot.version, snapshotStore.findLatestByProcessId("p1")!!.version)
         assertEquals(1, listener.processEvents.filterIsInstance<AgentProcessTerminatedEvent>().size)

@@ -21,14 +21,19 @@ import com.embabel.agent.spi.validation.DefaultAgentValidationManager
 import com.embabel.agent.spi.validation.GoapPathToCompletionValidator
 import com.embabel.common.core.validation.ValidationErrorCodes
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
+import org.springframework.boot.test.system.CapturedOutput
+import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.context.support.GenericApplicationContext
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@ExtendWith(OutputCaptureExtension::class)
 class DefaultAgentValidationManagerTest {
 
     @Test
-    fun `goal without matching action is invalid`() {
+    fun `goal without matching action is invalid and logged once`(output: CapturedOutput) {
         val ac = GenericApplicationContext()
         ac.refresh()
         val manager = DefaultAgentValidationManager(
@@ -41,6 +46,10 @@ class DefaultAgentValidationManagerTest {
         assertFalse(r.isValid)
         assertTrue(
             r.errors.any { it.code == ValidationErrorCodes.GOAL_ACTION_NOT_FOUND }
+        )
+        assertEquals(
+            1,
+            output.out.lines().count { it.contains(ValidationErrorCodes.GOAL_ACTION_NOT_FOUND) },
         )
     }
 
